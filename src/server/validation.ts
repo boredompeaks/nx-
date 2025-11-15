@@ -214,6 +214,36 @@ export const messageValidation: ValidationSchema = {
     required: false,
     enum: ['text', 'image', 'file', 'system']
   }
+  ,
+  reply_to_id: {
+    type: 'string',
+    required: false,
+    pattern: /^[a-zA-Z0-9\-_]+$/,
+    minLength: 1,
+    maxLength: 50
+  },
+  media_url: {
+    type: 'string',
+    required: false,
+    minLength: 1,
+    maxLength: 1000
+  },
+  disappear_after: {
+    type: 'number',
+    required: false,
+    min: 1,
+    max: 86400
+  },
+  disappears_at: {
+    type: 'string',
+    required: false,
+    minLength: 10,
+    maxLength: 64
+  },
+  is_one_time_view: {
+    type: 'boolean',
+    required: false
+  }
 };
 
 export const reactionValidation: ValidationSchema = {

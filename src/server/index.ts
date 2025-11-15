@@ -1,8 +1,14 @@
 import express from 'express';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import bodyParser from 'body-parser';
 import helmet from 'helmet';
 import cors from 'cors';
+import mime from 'mime';
 import rateLimit from 'express-rate-limit';
+import { createClient } from '@supabase/supabase-js';
+import crypto from 'node:crypto';
+import 'dotenv/config';
 import { validateInput, 
          chatValidation, 
          messageValidation, 
@@ -12,8 +18,17 @@ import { validateInput,
          presenceValidation,
          searchValidation } from './validation.js';
 import { errorHandler, asyncHandler, requestTimeout, AppError, NotFoundError } from './errorHandler.js';
+import { attachUser, requireAuth } from './authMiddleware.js';
 
 const app = express();
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+let webDir = path.resolve(__dirname, '../../..', 'web');
+const builtDir = path.resolve(webDir, 'dist');
+try {
+  webDir = builtDir;
+} catch {}
 
 // Security middleware
 app.use(helmet({
@@ -37,6 +52,17 @@ app.use(cors({
   optionsSuccessStatus: 200,
 }));
 
+app.use(express.static(webDir, {
+  setHeaders: (res, filePath) => {
+    const type = (mime as any).getType(filePath) || 'application/octet-stream';
+    res.setHeader('Content-Type', type);
+  }
+}));
+
+app.get('/', (_req, res) => {
+  res.sendFile(path.join(webDir, 'index.html'));
+});
+
 // Rate limiting
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
@@ -57,6 +83,7 @@ app.use(bodyParser.urlencoded({ extended: true, limit: '10mb' }));
 
 // Request timeout middleware
 app.use(requestTimeout(30000)); // 30 seconds
+app.use(attachUser);
 
 // Request logging middleware
 app.use((req, res, next) => {
@@ -72,224 +99,197 @@ type ReadReceipt = { id: string; message_id: string; user_id: string; read_at: n
 type Typing = { chat_id: string; user_id: string; is_typing: boolean; updated_at: number };
 type Presence = { user_id: string; status: 'online'|'offline'|'away'; updated_at: number };
 
-const chats: Map<string, Chat> = new Map();
-const messages: Map<string, Message> = new Map();
-const reactions: Reaction[] = [];
-const receipts: ReadReceipt[] = [];
-const typingIndicators: Typing[] = [];
-const presence: Presence[] = [];
+const supabaseUrl = process.env.SUPABASE_URL || '';
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+const supabase = createClient(supabaseUrl, supabaseKey);
 
 // Chat endpoints with validation
-app.post('/chats', validateInput(chatValidation), asyncHandler(async (req: express.Request, res: express.Response) => {
-  const id = `c_${Date.now()}`;
-  const chat: Chat = { 
-    id, 
-    name: req.body.name || `Chat ${id}`, 
-    is_group: req.body.is_group || false 
-  };
-  chats.set(id, chat);
-  res.status(201).json(chat);
+app.post('/chats', requireAuth, validateInput(chatValidation), asyncHandler(async (req: express.Request, res: express.Response) => {
+  const id = crypto.randomUUID();
+  const chatInsert = {
+    id,
+    name: req.body.name || `Chat ${id}`,
+    is_group: req.body.is_group || false,
+    created_by: (req as any).userId || null,
+  } as any;
+  const { data, error } = await supabase.from('chats').insert(chatInsert).select().single();
+  if (error) throw new AppError(503, error.message, true, 'DATABASE_ERROR');
+  res.status(201).json(data);
 }));
 
 app.get('/chats', asyncHandler(async (_req: express.Request, res: express.Response) => {
-  const chatList = Array.from(chats.values());
-  res.json({
-    data: chatList,
-    count: chatList.length,
-    timestamp: new Date().toISOString()
-  });
+  const { data, error } = await supabase.from('chats').select('*').order('last_message_at', { ascending: false });
+  if (error) throw new AppError(503, error.message, true, 'DATABASE_ERROR');
+  res.json({ data: data || [], count: (data || []).length, timestamp: new Date().toISOString() });
 }));
 
 // Message endpoints with validation
-app.post('/messages', validateInput(messageValidation), asyncHandler(async (req: express.Request, res: express.Response) => {
-  // Check if chat exists
-  if (!chats.has(req.body.chat_id)) {
-    throw new NotFoundError('Chat', req.body.chat_id);
-  }
-  
-  const id = `m_${Date.now()}`;
-  const msg: Message = {
+app.post('/messages', requireAuth, validateInput(messageValidation), asyncHandler(async (req: express.Request, res: express.Response) => {
+  const chatId = req.body.chat_id;
+  const { data: chatExists, error: chatErr } = await supabase.from('chats').select('id').eq('id', chatId).maybeSingle();
+  if (chatErr) throw new AppError(503, chatErr.message, true, 'DATABASE_ERROR');
+  if (!chatExists) throw new NotFoundError('Chat', chatId);
+  const id = crypto.randomUUID();
+  const insert = {
     id,
     chat_id: req.body.chat_id,
-    sender_id: req.body.sender_id,
+    sender_id: (req as any).userId || req.body.sender_id,
     content: req.body.content,
     content_type: req.body.content_type || 'text',
-    created_at: Date.now(),
-  };
-  messages.set(id, msg);
-  res.status(201).json(msg);
+    media_url: (req.body as any).media_url,
+    disappear_after: (req.body as any).disappear_after,
+    disappears_at: (req.body as any).disappears_at,
+    reply_to_id: (req.body as any).reply_to_id,
+    is_one_time_view: (req.body as any).is_one_time_view,
+  } as any;
+  const { data, error } = await supabase.from('messages').insert(insert).select().single();
+  if (error) throw new AppError(503, error.message, true, 'DATABASE_ERROR');
+  const statusRow = {
+    message_id: id,
+    user_id: (req as any).userId || req.body.sender_id,
+    is_delivered: true,
+    delivered_at: new Date().toISOString(),
+  } as any;
+  await supabase.from('message_status').upsert(statusRow);
+  res.status(201).json(data);
 }));
 
 app.get('/messages', validateInput({ chat_id: messageValidation.chat_id as any }, 'query'), asyncHandler(async (req: express.Request, res: express.Response) => {
   const chat_id = req.query.chat_id as string;
-  
-  // Check if chat exists
-  if (!chats.has(chat_id)) {
-    throw new NotFoundError('Chat', chat_id);
-  }
-  
-  const list = Array.from(messages.values()).filter(m => m.chat_id === chat_id);
-  res.json({
-    data: list,
-    count: list.length,
-    chat_id,
-    timestamp: new Date().toISOString()
-  });
+  const { data: chatExists, error: chatErr } = await supabase.from('chats').select('id').eq('id', chat_id).maybeSingle();
+  if (chatErr) throw new AppError(503, chatErr.message, true, 'DATABASE_ERROR');
+  if (!chatExists) throw new NotFoundError('Chat', chat_id);
+  const { data, error, count } = await supabase
+    .from('messages')
+    .select('*', { count: 'exact' })
+    .eq('chat_id', chat_id)
+    .order('created_at', { ascending: true });
+  if (error) throw new AppError(503, error.message, true, 'DATABASE_ERROR');
+  res.json({ data: data || [], count: count || 0, chat_id, timestamp: new Date().toISOString() });
 }));
 
 // Reaction endpoints with validation
-app.post('/reactions', validateInput(reactionValidation), asyncHandler(async (req: express.Request, res: express.Response) => {
-  // Check if message exists
-  if (!messages.has(req.body.message_id)) {
-    throw new NotFoundError('Message', req.body.message_id);
+app.post('/reactions', requireAuth, validateInput(reactionValidation), asyncHandler(async (req: express.Request, res: express.Response) => {
+  const { data: msgExists, error: msgErr } = await supabase.from('messages').select('id').eq('id', req.body.message_id).maybeSingle();
+  if (msgErr) throw new AppError(503, msgErr.message, true, 'DATABASE_ERROR');
+  if (!msgExists) throw new NotFoundError('Message', req.body.message_id);
+  const insert = {
+    message_id: req.body.message_id,
+    user_id: (req as any).userId || req.body.user_id,
+    emoji: req.body.emoji,
+  } as any;
+  const { data, error } = await supabase.from('reactions').insert(insert).select().single();
+  if (error && error.code === '23505') {
+    const { data: existing } = await supabase
+      .from('reactions')
+      .select('*')
+      .eq('message_id', req.body.message_id)
+      .eq('user_id', req.body.user_id)
+      .eq('emoji', req.body.emoji)
+      .maybeSingle();
+    return res.status(200).json(existing);
   }
-  
-  // Check for duplicate reaction (same user, same message, same emoji)
-  const existingReaction = reactions.find(
-    r => r.message_id === req.body.message_id && 
-         r.user_id === req.body.user_id && 
-         r.emoji === req.body.emoji
-  );
-  
-  if (existingReaction) {
-    return res.status(200).json(existingReaction); // Return existing reaction
-  }
-  
-  const r: Reaction = { 
-    id: `r_${Date.now()}`, 
-    message_id: req.body.message_id, 
-    user_id: req.body.user_id, 
-    emoji: req.body.emoji 
-  };
-  reactions.push(r);
-  res.status(201).json(r);
+  if (error) throw new AppError(503, error.message, true, 'DATABASE_ERROR');
+  res.status(201).json(data);
 }));
 
 app.get('/reactions', validateInput({ message_id: reactionValidation.message_id as any }, 'query'), asyncHandler(async (req: express.Request, res: express.Response) => {
   const message_id = req.query.message_id as string;
-  
-  // Check if message exists
-  if (!messages.has(message_id)) {
-    throw new NotFoundError('Message', message_id);
-  }
-  
-  const messageReactions = reactions.filter(r => r.message_id === message_id);
-  res.json({
-    data: messageReactions,
-    count: messageReactions.length,
-    message_id,
-    timestamp: new Date().toISOString()
-  });
+  const { data: msgExists, error: msgErr } = await supabase.from('messages').select('id').eq('id', message_id).maybeSingle();
+  if (msgErr) throw new AppError(503, msgErr.message, true, 'DATABASE_ERROR');
+  if (!msgExists) throw new NotFoundError('Message', message_id);
+  const { data, error, count } = await supabase
+    .from('reactions')
+    .select('*', { count: 'exact' })
+    .eq('message_id', message_id)
+    .order('created_at', { ascending: true });
+  if (error) throw new AppError(503, error.message, true, 'DATABASE_ERROR');
+  res.json({ data: data || [], count: count || 0, message_id, timestamp: new Date().toISOString() });
 }));
 
 // Read receipt endpoints with validation
-app.post('/read-receipts', validateInput(readReceiptValidation), asyncHandler(async (req: express.Request, res: express.Response) => {
-  // Check if message exists
-  if (!messages.has(req.body.message_id)) {
-    throw new NotFoundError('Message', req.body.message_id);
-  }
-  
-  // Check for existing read receipt
-  const existingReceipt = receipts.find(
-    r => r.message_id === req.body.message_id && r.user_id === req.body.user_id
-  );
-  
-  if (existingReceipt) {
-    return res.status(200).json(existingReceipt);
-  }
-  
-  const rr: ReadReceipt = { 
-    id: `rr_${Date.now()}`, 
-    message_id: req.body.message_id, 
-    user_id: req.body.user_id, 
-    read_at: Date.now() 
-  };
-  receipts.push(rr);
-  res.status(201).json(rr);
+app.post('/read-receipts', requireAuth, validateInput(readReceiptValidation), asyncHandler(async (req: express.Request, res: express.Response) => {
+  const { data: msgExists, error: msgErr } = await supabase.from('messages').select('id, chat_id').eq('id', req.body.message_id).maybeSingle();
+  if (msgErr) throw new AppError(503, msgErr.message, true, 'DATABASE_ERROR');
+  if (!msgExists) throw new NotFoundError('Message', req.body.message_id);
+  const insert = {
+    message_id: req.body.message_id,
+    user_id: (req as any).userId || req.body.user_id,
+    chat_id: msgExists.chat_id,
+    read_at: new Date().toISOString(),
+  } as any;
+  const { data, error } = await supabase.from('read_receipts').upsert(insert).select().single();
+  if (error) throw new AppError(503, error.message, true, 'DATABASE_ERROR');
+  await supabase
+    .from('message_status')
+    .upsert({ message_id: req.body.message_id, user_id: (req as any).userId || req.body.user_id, is_read: true, read_at: new Date().toISOString() });
+  res.status(201).json(data);
 }));
 
 app.get('/read-receipts', validateInput({ message_id: readReceiptValidation.message_id as any }, 'query'), asyncHandler(async (req: express.Request, res: express.Response) => {
   const message_id = req.query.message_id as string;
-  
-  // Check if message exists
-  if (!messages.has(message_id)) {
-    throw new NotFoundError('Message', message_id);
-  }
-  
-  const messageReceipts = receipts.filter(r => r.message_id === message_id);
-  res.json({
-    data: messageReceipts,
-    count: messageReceipts.length,
-    message_id,
-    timestamp: new Date().toISOString()
-  });
+  const { data: msgExists, error: msgErr } = await supabase.from('messages').select('id').eq('id', message_id).maybeSingle();
+  if (msgErr) throw new AppError(503, msgErr.message, true, 'DATABASE_ERROR');
+  if (!msgExists) throw new NotFoundError('Message', message_id);
+  const { data, error, count } = await supabase
+    .from('read_receipts')
+    .select('*', { count: 'exact' })
+    .eq('message_id', message_id)
+    .order('read_at', { ascending: true });
+  if (error) throw new AppError(503, error.message, true, 'DATABASE_ERROR');
+  res.json({ data: data || [], count: count || 0, message_id, timestamp: new Date().toISOString() });
 }));
 
 // Typing indicator endpoints with validation
-app.post('/typing', validateInput(typingValidation), asyncHandler(async (req: express.Request, res: express.Response) => {
-  // Check if chat exists
-  if (!chats.has(req.body.chat_id)) {
-    throw new NotFoundError('Chat', req.body.chat_id);
-  }
-  
-  const t: Typing = { 
-    chat_id: req.body.chat_id, 
-    user_id: req.body.user_id, 
-    is_typing: req.body.is_typing, 
-    updated_at: Date.now() 
-  };
-  
-  const idx = typingIndicators.findIndex(x => x.chat_id === t.chat_id && x.user_id === t.user_id);
-  if (idx >= 0) {
-    typingIndicators[idx] = t;
-  } else {
-    typingIndicators.push(t);
-  }
-  
-  res.json(t);
+app.post('/typing', requireAuth, validateInput(typingValidation), asyncHandler(async (req: express.Request, res: express.Response) => {
+  const chatId = req.body.chat_id;
+  const { data: chatExists, error: chatErr } = await supabase.from('chats').select('id').eq('id', chatId).maybeSingle();
+  if (chatErr) throw new AppError(503, chatErr.message, true, 'DATABASE_ERROR');
+  if (!chatExists) throw new NotFoundError('Chat', chatId);
+  const row = {
+    chat_id: chatId,
+    user_id: (req as any).userId || req.body.user_id,
+    is_typing: !!req.body.is_typing,
+    updated_at: new Date().toISOString(),
+  } as any;
+  const { data, error } = await supabase.from('typing_indicators').upsert(row).select().single();
+  if (error) throw new AppError(503, error.message, true, 'DATABASE_ERROR');
+  res.json(data);
 }));
 
 app.get('/typing', validateInput({ chat_id: typingValidation.chat_id as any }, 'query'), asyncHandler(async (req: express.Request, res: express.Response) => {
   const chat_id = req.query.chat_id as string;
-  
-  // Check if chat exists
-  if (!chats.has(chat_id)) {
-    throw new NotFoundError('Chat', chat_id);
-  }
-  
-  const chatTypingIndicators = typingIndicators.filter(t => t.chat_id === chat_id);
-  res.json({
-    data: chatTypingIndicators,
-    count: chatTypingIndicators.length,
-    chat_id,
-    timestamp: new Date().toISOString()
-  });
+  const { data: chatExists, error: chatErr } = await supabase.from('chats').select('id').eq('id', chat_id).maybeSingle();
+  if (chatErr) throw new AppError(503, chatErr.message, true, 'DATABASE_ERROR');
+  if (!chatExists) throw new NotFoundError('Chat', chat_id);
+  const { data, error, count } = await supabase
+    .from('typing_indicators')
+    .select('*', { count: 'exact' })
+    .eq('chat_id', chat_id)
+    .order('updated_at', { ascending: false });
+  if (error) throw new AppError(503, error.message, true, 'DATABASE_ERROR');
+  res.json({ data: data || [], count: count || 0, chat_id, timestamp: new Date().toISOString() });
 }));
 
 // Presence endpoints with validation
-app.post('/presence', validateInput(presenceValidation), asyncHandler(async (req: express.Request, res: express.Response) => {
-  const p: Presence = { 
-    user_id: req.body.user_id, 
-    status: req.body.status, 
-    updated_at: Date.now() 
-  };
-  
-  const idx = presence.findIndex(x => x.user_id === p.user_id);
-  if (idx >= 0) {
-    presence[idx] = p;
-  } else {
-    presence.push(p);
-  }
-  
-  res.json(p);
+app.post('/presence', requireAuth, validateInput(presenceValidation), asyncHandler(async (req: express.Request, res: express.Response) => {
+  const { data, error } = await supabase
+    .from('profiles')
+    .update({ status: req.body.status, last_seen: new Date().toISOString() })
+    .eq('id', (req as any).userId || req.body.user_id)
+    .select()
+    .single();
+  if (error) throw new AppError(503, error.message, true, 'DATABASE_ERROR');
+  res.json(data);
 }));
 
 app.get('/presence', asyncHandler(async (_req: express.Request, res: express.Response) => {
-  res.json({
-    data: presence,
-    count: presence.length,
-    timestamp: new Date().toISOString()
-  });
+  const { data, error, count } = await supabase
+    .from('profiles')
+    .select('id, username, status, last_seen', { count: 'exact' })
+    .order('last_seen', { ascending: false });
+  if (error) throw new AppError(503, error.message, true, 'DATABASE_ERROR');
+  res.json({ data: data || [], count: count || 0, timestamp: new Date().toISOString() });
 }));
 
 // Health check endpoint
@@ -302,6 +302,22 @@ app.get('/health', (req, res) => {
     environment: process.env.NODE_ENV || 'development'
   });
 });
+
+app.get('/metrics', asyncHandler(async (_req: express.Request, res: express.Response) => {
+  const [messagesCount, chatsCount, profilesCount] = await Promise.all([
+    supabase.from('messages').select('id', { count: 'exact', head: true }),
+    supabase.from('chats').select('id', { count: 'exact', head: true }),
+    supabase.from('profiles').select('id', { count: 'exact', head: true }),
+  ])
+  res.json({
+    timestamp: new Date().toISOString(),
+    counts: {
+      messages: messagesCount.count || 0,
+      chats: chatsCount.count || 0,
+      profiles: profilesCount.count || 0,
+    }
+  })
+}))
 
 // 404 handler for unknown routes
 app.use('*', (req, res) => {
@@ -323,4 +339,13 @@ app.listen(port, () => {
   // eslint-disable-next-line no-console
   console.log(`server listening on ${port}`);
 });
-
+// Message status endpoints
+app.get('/message-status', asyncHandler(async (req: express.Request, res: express.Response) => {
+  const message_id = String(req.query.message_id || '');
+  const { data, error } = await supabase
+    .from('message_status')
+    .select('*')
+    .eq('message_id', message_id);
+  if (error) throw new AppError(503, error.message, true, 'DATABASE_ERROR');
+  res.json({ data: data || [], message_id, timestamp: new Date().toISOString() });
+}));

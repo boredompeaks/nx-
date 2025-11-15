@@ -1,54 +1,54 @@
-import { describe, it, expect, beforeEach } from '@jest/globals';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { renderMessages, addMessageToUI, showMessageActions, startEditMessage } from '../web/main.js';
 
 // Mock DOM environment
 global.document = {
-  getElementById: jest.fn(() => ({
+  getElementById: vi.fn(() => ({
     innerHTML: '',
-    appendChild: jest.fn(),
+    appendChild: vi.fn(),
     scrollTop: 0,
     scrollHeight: 100,
-    querySelector: jest.fn(),
-    querySelectorAll: jest.fn(() => []),
+    querySelector: vi.fn(),
+    querySelectorAll: vi.fn(() => []),
     classList: {
-      toggle: jest.fn(),
-      add: jest.fn(),
-      remove: jest.fn()
+      toggle: vi.fn(),
+      add: vi.fn(),
+      remove: vi.fn()
     },
     style: {},
     dataset: {},
-    addEventListener: jest.fn(),
-    removeEventListener: jest.fn()
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn()
   })),
-  createElement: jest.fn((tag) => ({
+  createElement: vi.fn((tag) => ({
     className: '',
     innerHTML: '',
     textContent: '',
     onclick: null,
     onkeydown: null,
-    appendChild: jest.fn(),
-    insertBefore: jest.fn(),
-    remove: jest.fn(),
-    focus: jest.fn(),
-    select: jest.fn(),
+    appendChild: vi.fn(),
+    insertBefore: vi.fn(),
+    remove: vi.fn(),
+    focus: vi.fn(),
+    select: vi.fn(),
     style: {},
     dataset: {},
     classList: {
-      add: jest.fn(),
-      remove: jest.fn(),
-      contains: jest.fn(),
-      toggle: jest.fn()
+      add: vi.fn(),
+      remove: vi.fn(),
+      contains: vi.fn(),
+      toggle: vi.fn()
     }
   })),
-  createDocumentFragment: jest.fn(() => ({
-    appendChild: jest.fn()
+  createDocumentFragment: vi.fn(() => ({
+    appendChild: vi.fn()
   }))
 };
 
 global.localStorage = {
-  getItem: jest.fn(),
-  setItem: jest.fn(),
-  removeItem: jest.fn()
+  getItem: vi.fn(),
+  setItem: vi.fn(),
+  removeItem: vi.fn()
 };
 
 global.navigator = {
@@ -57,12 +57,12 @@ global.navigator = {
 };
 
 global.window = {
-  matchMedia: jest.fn(() => ({ matches: false }))
+  matchMedia: vi.fn(() => ({ matches: false }))
 };
 
 describe('Message Features', () => {
   beforeEach(() => {
-    jest.clearAllMocks();
+    vi.clearAllMocks();
   });
 
   describe('Message Rendering', () => {
@@ -125,10 +125,10 @@ describe('Message Features', () => {
     it('should show message actions for sent messages', () => {
       const mockMessageEl = {
         classList: {
-          contains: jest.fn((className) => className === 'sent')
+          contains: vi.fn((className) => className === 'sent')
         },
-        querySelector: jest.fn(() => null),
-        appendChild: jest.fn()
+        querySelector: vi.fn(() => null),
+        appendChild: vi.fn()
       };
 
       const mockActions = document.createElement();
@@ -143,10 +143,10 @@ describe('Message Features', () => {
     it('should include edit button for sent messages', () => {
       const mockMessageEl = {
         classList: {
-          contains: jest.fn((className) => className === 'sent')
+          contains: vi.fn((className) => className === 'sent')
         },
-        querySelector: jest.fn(() => null),
-        appendChild: jest.fn()
+        querySelector: vi.fn(() => null),
+        appendChild: vi.fn()
       };
 
       const mockActions = document.createElement();
@@ -166,10 +166,10 @@ describe('Message Features', () => {
     it('should include delete button for sent messages', () => {
       const mockMessageEl = {
         classList: {
-          contains: jest.fn((className) => className === 'sent')
+          contains: vi.fn((className) => className === 'sent')
         },
-        querySelector: jest.fn(() => null),
-        appendChild: jest.fn()
+        querySelector: vi.fn(() => null),
+        appendChild: vi.fn()
       };
 
       const mockActions = document.createElement();
@@ -190,12 +190,12 @@ describe('Message Features', () => {
   describe('Message Editing', () => {
     it('should create edit input with current text', () => {
       const mockMessageEl = {
-        querySelector: jest.fn((selector) => {
+        querySelector: vi.fn((selector) => {
           if (selector === '.message-text') {
             return { textContent: 'Original text' };
           }
           if (selector === '.message-content') {
-            return { insertBefore: jest.fn() };
+            return { insertBefore: vi.fn() };
           }
           return null;
         })
@@ -221,8 +221,8 @@ describe('Message Features', () => {
       ];
 
       const mockElements = [
-        { classList: { add: jest.fn(), remove: jest.fn() } },
-        { classList: { add: jest.fn(), remove: jest.fn() } }
+        { classList: { add: vi.fn(), remove: vi.fn() } },
+        { classList: { add: vi.fn(), remove: vi.fn() } }
       ];
 
       document.querySelector.mockImplementation((selector) => {
@@ -247,8 +247,8 @@ describe('Message Features', () => {
     it('should toggle between dark and light themes', () => {
       const mockBody = {
         classList: {
-          toggle: jest.fn(),
-          add: jest.fn()
+          toggle: vi.fn(),
+          add: vi.fn()
         }
       };
 

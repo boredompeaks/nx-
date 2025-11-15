@@ -1,4 +1,16 @@
-import { supabase, subscribeToMessages, subscribeToReactions, subscribeToTyping, subscribeToPresence } from '../src/supabase.js';
+function subscribeToMessages(chatId, callback, errorCallback){
+  if (typeof errorCallback === 'function') {
+    errorCallback(new Error('realtime not available'));
+  }
+  return { unsubscribe(){ } };
+}
+
+function subscribeToTyping(chatId, callback, errorCallback){
+  if (typeof errorCallback === 'function') {
+    errorCallback(new Error('realtime not available'));
+  }
+  return { unsubscribe(){ } };
+}
 
 // Enhanced API client with error handling
 const api = {
@@ -724,4 +736,3 @@ renderMessages = function(msgs){
 
 api.presence(currentUser,'online');
 refreshChats();
-

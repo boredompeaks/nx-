@@ -3,32 +3,11 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Frosted Chat — Demo</title>
-    <link rel="stylesheet" href="styles.css" />
+    <title>Frosted Chat</title>
+    <link rel="icon" href="/favicon.ico" />
   </head>
   <body>
-    <div class="app">
-      <aside class="sidebar glass">
-        <h1 class="title">Chats</h1>
-        <input type="text" id="search-chats" placeholder="Search messages..." class="search-input">
-        <div id="chat-list"></div>
-        <button id="new-chat" class="btn">New Chat</button>
-        <button id="theme-toggle" class="btn theme-btn">🌙</button>
-      </aside>
-      <main class="conversation glass">
-        <div class="header">
-          <span id="presence-dot" class="presence online"></span>
-          <span id="chat-name">Conversation</span>
-          <span id="typing-indicator" class="typing hidden">Typing...</span>
-        </div>
-        <div id="messages" class="messages"></div>
-        <div class="composer">
-          <input id="message-input" placeholder="Type a message" />
-          <button id="send" class="btn">Send</button>
-        </div>
-      </main>
-    </div>
-    <script src="main.js"></script>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
-

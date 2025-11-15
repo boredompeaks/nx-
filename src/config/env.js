@@ -16,7 +16,7 @@ const requiredEnvVars = [
 ];
 
 const missingEnvVars = requiredEnvVars.filter(key => !process.env[key]);
-if (missingEnvVars.length > 0) {
+if (missingEnvVars.length > 0 && process.env.NODE_ENV !== 'test') {
   console.error('Missing required environment variables:', missingEnvVars.join(', '));
   console.error('Please copy .env.example to .env and configure your values');
   process.exit(1);
@@ -60,4 +60,17 @@ export const env = {
 if (env.ENCRYPTION_KEY.length < 32 && env.isProduction()) {
   console.error('ENCRYPTION_KEY must be at least 32 characters in production');
   process.exit(1);
+}
+
+export function getEnvConfig() {
+  const supabase = {
+    url: process.env.SUPABASE_URL || 'https://example.supabase.co',
+    anonKey: process.env.SUPABASE_ANON_KEY || 'sb_test_anon_key',
+    serviceKey: process.env.SUPABASE_SERVICE_KEY || 'sb_test_service_key'
+  };
+
+  return {
+    supabase,
+    environment: env.NODE_ENV,
+  };
 }

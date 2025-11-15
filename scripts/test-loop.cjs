@@ -11,7 +11,7 @@ async function runUntilPass() {
 
   while (true) {
     console.log(`\n[TEST LOOP] Attempt ${attempt}...`);
-    const result = spawnSync('npx', ['jest'], { stdio: 'inherit', shell: true });
+    const result = spawnSync('npx', ['vitest', 'run'], { stdio: 'inherit', shell: true });
     const code = result.status ?? result.exitCode ?? 1;
     if (code === 0) {
       console.log(`[TEST LOOP] All tests passed on attempt ${attempt}.`);
